@@ -2,6 +2,14 @@ import requests
 import os
 import json
 import boto3
+from datetime import datetime
+
+def serialize_roles(roles):
+    """ Helper function to convert datetime objects to strings. """
+    for role in roles:
+        if 'CreateDate' in role and isinstance(role['CreateDate'], datetime):
+            role['CreateDate'] = role['CreateDate'].isoformat()  # Convert to ISO 8601 string
+    return roles
 
 def get_role_list():
     try:
@@ -23,10 +31,14 @@ def get_role_list():
         # Check if 'Roles' is present in the response
         if 'Roles' in response:
             roles = response['Roles']
-            print('Assigned Roles:', roles)
+            
+            # Serialize the roles list to handle datetime objects
+            serialized_roles = serialize_roles(roles)
+            
+            print('Assigned Roles:', serialized_roles)
             return {
                 'statusCode': 200,
-                'body': json.dumps(roles)
+                'body': json.dumps(serialized_roles)  # Convert to JSON-safe format
             }
         else:
             print('Roles key not found in response.')
