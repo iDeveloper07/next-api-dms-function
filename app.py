@@ -13,7 +13,7 @@ from middleware import middleware_after
 from rds_proxy import execute_query
 from utils import DateTimeEncoder  # Import the custom DateTimeEncoder
 
-from module.role import get_role_list
+from module.role import get_role_list, create_iam_role
 
 logger = Logger()
 app = APIGatewayRestResolver()
@@ -100,14 +100,34 @@ def list_wasabi_buckets():
 
 # Role management
 @app.get("/roles")
-def get_roles():
+def roles_get_list():
     try:
         roles = get_role_list()
         return roles
     except (BotoCoreError, ClientError) as e:
         logger.error(f"Failed to list Wasabi Roles: {str(e)}")
         return json.dumps({"error": "Failed to list roles from Wasabi"}, cls=DateTimeEncoder), 500
+        
+@app.post("/roles/create")
+def roles_create():
+    try:
+        # Fetch and parse the JSON body of the request
+        role_data = app.current_event.json_body
+        
+        # Access dictionary keys properly
+        role_name = role_data.get('RoleName')
+        assume_role_policy_document = role_data.get('AssumeRolePolicyDocument')
 
+        if not role_name or not assume_role_policy_document:
+            return {"error": "Missing RoleName or AssumeRolePolicyDocument"}, 400
+
+        # Call the create IAM role function
+        res = create_iam_role(role_name, assume_role_policy_document)
+        return {"res": res}
+    
+    except (BotoCoreError, ClientError) as e:
+        logger.error(f"Failed to create Wasabi Role: {str(e)}")
+        return {"error": "Failed to create role from Wasabi"}, 500
 
 @middleware_after
 @logger.inject_lambda_context(correlation_id_path=correlation_paths.API_GATEWAY_REST)

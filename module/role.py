@@ -53,3 +53,37 @@ def get_role_list():
             'statusCode': 500,
             'body': f"Error fetching roles: {str(e)}"
         }
+
+
+def create_iam_role(role_name, assume_role_policy_document, description=None):
+    try:
+        # Initialize the Wasabi IAM client
+        iam = boto3.client(
+            'iam',
+            aws_access_key_id=os.environ['WASABI_ACCESS_KEY'],  # Fetch from environment variables
+            aws_secret_access_key=os.environ['WASABI_SECRET_KEY'],  # Fetch from environment variables
+            region_name='us-east-1',  # Adjust the region if needed
+            endpoint_url='https://iam.wasabisys.com'  # Wasabi IAM endpoint
+        )
+
+        # Create the IAM role
+        response = iam.create_role(
+            RoleName=role_name,
+            AssumeRolePolicyDocument=json.dumps(assume_role_policy_document),
+            Description=description if description else f"Role created for {role_name}",
+            MaxSessionDuration=3600  # The maximum session duration (optional, defaults to 1 hour)
+        )
+
+        return {
+            'statusCode': 200,
+            # 'body': json.dumps({'message': f"Role {role_name} created successfully", 'role': response})
+            'body': json.dumps({'message': f"Role {role_name} created successfully"})
+        }
+
+    except Exception as e:
+        # Log any error and return the error response
+        print(f"Error creating role: {str(e)}")
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'error': f"Error creating role: {str(e)}"})
+        }
