@@ -76,3 +76,60 @@ def list_users():
             'statusCode': 500,
             'body': json.dumps({'error': str(e)})
         }
+
+def get_user_info(iam, user_name):
+    """ Get basic user information using get_user() """
+    try:
+        # Fetch the user information
+        response = iam.get_user(UserName=user_name)
+        return response['User']
+    except Exception as e:
+        print(f"Error fetching user info for {user_name}: {str(e)}")
+        return None
+
+def get_user_details(user_name):
+    """ Main function to get detailed user info """
+    try:
+        # Initialize IAM client for Wasabi
+        iam = boto3.client(
+            'iam',
+            aws_access_key_id=os.environ['WASABI_ACCESS_KEY'],  # Fetch from environment variables
+            aws_secret_access_key=os.environ['WASABI_SECRET_KEY'],  # Fetch from environment variables
+            region_name='us-east-1',  # Adjust the region if needed
+            endpoint_url='https://iam.wasabisys.com',  # Wasabi IAM endpoint
+            api_version='2010-05-08'  # IAM API version (compatible with AWS)
+        )
+
+        # Fetch user basic information
+        user_info = get_user_info(iam, user_name)
+        if not user_info:
+            return {
+                'statusCode': 404,
+                'body': json.dumps({'error': 'User not found'})
+            }
+
+        # Fetch user's active status and MFA status
+        active_status = get_user_active_status(iam, user_name)
+        mfa_status = get_user_mfa_status(iam, user_name)
+
+        # Fetch user's access keys
+        # access_keys = get_user_access_keys(iam, user_name)
+
+        # Combine all user details into one response
+        user_details = {
+            'UserInfo': user_info,
+            'Active': active_status,
+            'MFAEnabled': mfa_status
+            # 'AccessKeys': access_keys
+        }
+
+        # Return the detailed user info
+        return json.dumps(user_details, cls=DateTimeEncoder)  # Use custom encoder for datetime
+
+    except (BotoCoreError, ClientError) as e:
+        # Log and return any error
+        print(f"Error fetching user details: {str(e)}")
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'error': str(e)})
+        }

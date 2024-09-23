@@ -15,7 +15,7 @@ from utils import DateTimeEncoder  # Import the custom DateTimeEncoder
 
 from module.role import get_role_list, create_iam_role
 
-from module.users import list_users
+from module.users import list_users, get_user_details
 
 logger = Logger()
 app = APIGatewayRestResolver()
@@ -140,6 +140,15 @@ def users_list():
     except (BotoCoreError, ClientError) as e:
         logger.error(f"Failed to list Wasabi Users: {str(e)}")
         return json.dumps({"error": "Failed to list users from Wasabi"}, cls=DateTimeEncoder), 500
+    
+@app.get("/users/<userName>")
+def get_user_info(userName: str):
+    try:
+        userInfo = get_user_details(userName)
+        return userInfo
+    except (BotoCoreError, ClientError) as e:
+        logger.error(f"Failed to list Wasabi Users: {str(e)}")
+        return json.dumps({"error": "Failed to list User Info from Wasabi"}, cls=DateTimeEncoder), 500
 
 @middleware_after
 @logger.inject_lambda_context(correlation_id_path=correlation_paths.API_GATEWAY_REST)
