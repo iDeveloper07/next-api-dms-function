@@ -168,3 +168,44 @@ def list_available_policies():
             'statusCode': 500,
             'body': json.dumps({'error': str(e)})
         }
+
+def get_assigned_policies(user_name):
+    try:
+        # Initialize the IAM client for Wasabi (or AWS)
+        iam = boto3.client(
+            'iam',
+            aws_access_key_id=os.environ['WASABI_ACCESS_KEY'],  # Fetch from environment variables
+            aws_secret_access_key=os.environ['WASABI_SECRET_KEY'],  # Fetch from environment variables
+            region_name='us-east-1',  # Adjust the region if needed
+            endpoint_url='https://iam.wasabisys.com',  # Wasabi IAM endpoint (for Wasabi)
+            api_version='2010-05-08'  # IAM API version (compatible with AWS)
+        )
+
+        # List all managed policies attached to the user
+        attached_policies_response = iam.list_attached_user_policies(UserName=user_name)
+        attached_policies = attached_policies_response.get('AttachedPolicies', [])
+
+        # List all inline policies attached to the user
+        inline_policies_response = iam.list_user_policies(UserName=user_name)
+        inline_policies = inline_policies_response.get('PolicyNames', [])
+
+        # Combine the results
+        user_policies = {
+            'ManagedPolicies': attached_policies,
+            'InlinePolicies': inline_policies
+        }
+
+        # Return the policies
+        return json.dumps(user_policies)
+        # return {
+        #     'statusCode': 200,
+        #     'body': json.dumps(user_policies)
+        # }
+
+    except (BotoCoreError, ClientError) as e:
+        # Log and return any error
+        print(f"Error fetching assigned policies for user {user_name}: {str(e)}")
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'error': str(e)})
+        }
