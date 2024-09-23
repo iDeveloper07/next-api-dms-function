@@ -209,3 +209,38 @@ def get_assigned_policies(user_name):
             'statusCode': 500,
             'body': json.dumps({'error': str(e)})
         }
+    
+def attach_policy_to_user(user_name, policy_arn):
+    try:
+        # Initialize IAM client for Wasabi (or AWS)
+        iam = boto3.client(
+            'iam',
+            aws_access_key_id=os.environ['WASABI_ACCESS_KEY'],  # Fetch from environment variables
+            aws_secret_access_key=os.environ['WASABI_SECRET_KEY'],  # Fetch from environment variables
+            region_name='us-east-1',  # Adjust the region if needed
+            endpoint_url='https://iam.wasabisys.com',  # Wasabi IAM endpoint (for Wasabi)
+            api_version='2010-05-08'  # IAM API version (compatible with AWS)
+        )
+
+        # Attach the managed policy to the user
+        iam.attach_user_policy(UserName=user_name, PolicyArn=policy_arn)
+        
+        return json.dumps({
+                'message': f"Policy {policy_arn} attached successfully to user {user_name}"
+        })
+
+        # Return success response
+        # return {
+        #     'statusCode': 200,
+        #     'body': json.dumps({
+        #         'message': f"Policy {policy_arn} attached successfully to user {user_name}"
+        #     })
+        # }
+
+    except (BotoCoreError, ClientError) as e:
+        # Log and return any error
+        print(f"Error attaching policy {policy_arn} to user {user_name}: {str(e)}")
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'error': str(e)})
+        }

@@ -15,7 +15,7 @@ from utils import DateTimeEncoder  # Import the custom DateTimeEncoder
 
 from module.role import get_role_list, create_iam_role
 
-from module.users import list_users, get_user_details, list_available_policies, get_assigned_policies
+from module.users import list_users, get_user_details, list_available_policies, get_assigned_policies, attach_policy_to_user
 
 logger = Logger()
 app = APIGatewayRestResolver()
@@ -168,7 +168,27 @@ def get_user_policies(userName: str):
         logger.error(f"Failed to list Wasabi Users: {str(e)}")
         return json.dumps({"error": "Failed to list User Info from Wasabi"}, cls=DateTimeEncoder), 500
 
+@app.post("/users/assgin/policy")
+def assgin_policy():
+    try:
+        # Fetch and parse the JSON body of the request
+        role_data = app.current_event.json_body
+        
+        # Access dictionary keys properly
+        user_name = role_data.get('UserName')
+        policy_arn = role_data.get('PolicyArn')
 
+        if not user_name or not policy_arn:
+            return {"error": "Missing UserName or PolicyArn"}, 400
+
+        # Call the create IAM role function
+        res = attach_policy_to_user(user_name, policy_arn)
+        return {"res": res}
+    
+    except (BotoCoreError, ClientError) as e:
+        logger.error(f"Failed to create Wasabi Role: {str(e)}")
+        return {"error": "Failed to create role from Wasabi"}, 500
+  
 
 @middleware_after
 @logger.inject_lambda_context(correlation_id_path=correlation_paths.API_GATEWAY_REST)
