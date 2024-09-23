@@ -133,3 +133,38 @@ def get_user_details(user_name):
             'statusCode': 500,
             'body': json.dumps({'error': str(e)})
         }
+
+def list_available_policies():
+    try:
+        # Initialize the IAM client for Wasabi (or AWS)
+        iam = boto3.client(
+            'iam',
+            aws_access_key_id=os.environ['WASABI_ACCESS_KEY'],  # Fetch from environment variables
+            aws_secret_access_key=os.environ['WASABI_SECRET_KEY'],  # Fetch from environment variables
+            region_name='us-east-1',  # Adjust the region if needed
+            endpoint_url='https://iam.wasabisys.com',  # Wasabi IAM endpoint (for Wasabi)
+            api_version='2010-05-08'  # IAM API version (compatible with AWS)
+        )
+
+        # List all policies
+        paginator = iam.get_paginator('list_policies')
+        policies = []
+        
+        # Paginate through all the policies available
+        for page in paginator.paginate(Scope='All', OnlyAttached=False):
+            policies.extend(page['Policies'])
+
+        # Return the list of policies
+        return json.dumps(policies, cls=DateTimeEncoder)
+        # return {
+        #     'statusCode': 200,
+        #     'body': json.dumps(policies)
+        # }
+
+    except (BotoCoreError, ClientError) as e:
+        # Log and return any error
+        print(f"Error fetching policies: {str(e)}")
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'error': str(e)})
+        }
