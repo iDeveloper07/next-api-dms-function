@@ -15,7 +15,7 @@ from utils import DateTimeEncoder  # Import the custom DateTimeEncoder
 
 from module.role import get_role_list, create_iam_role
 
-from module.users import list_users, get_user_details, list_available_policies, get_assigned_policies, attach_policy_to_user, remove_policy_from_user
+from module.users import list_users, get_user_details, list_available_policies, get_assigned_policies, attach_policy_to_user, remove_policy_from_user, update_user_info
 
 logger = Logger()
 app = APIGatewayRestResolver()
@@ -204,6 +204,29 @@ def remove_policy():
 
         # Call the create IAM role function
         res = remove_policy_from_user(user_name, policy_arn)
+        return {"res": res}
+    
+    except (BotoCoreError, ClientError) as e:
+        logger.error(f"Failed to create Wasabi Role: {str(e)}")
+        return {"error": "Failed to create role from Wasabi"}, 500
+  
+@app.post("/users/update")
+def update_user():
+    try:
+        # Fetch and parse the JSON body of the request
+        user_data = app.current_event.json_body
+        
+        # Access dictionary keys properly
+        user_name = user_data.get('UserName')
+        new_user_name = user_data.get('NewUserName')
+        new_path = user_data.get('NewPath')
+        active_status = user_data.get('Activate')
+
+        if not user_name or not new_user_name or not new_path:
+            return {"error": "Missing User Info"}, 400
+
+        # Call the create IAM role function
+        res = update_user_info(user_name, new_user_name, new_path, active_status)
         return {"res": res}
     
     except (BotoCoreError, ClientError) as e:

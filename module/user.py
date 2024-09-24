@@ -278,3 +278,67 @@ def remove_policy_from_user(user_name, policy_arn):
             'statusCode': 500,
             'body': json.dumps({'error': str(e)})
         }
+
+def update_user_info(user_name, new_user_name=None, new_path='/', active_status=False):
+    try:
+        # Initialize IAM client for Wasabi (or AWS)
+        iam = boto3.client(
+            'iam',
+            aws_access_key_id=os.environ['WASABI_ACCESS_KEY'],  # Fetch from environment variables
+            aws_secret_access_key=os.environ['WASABI_SECRET_KEY'],  # Fetch from environment variables
+            region_name='us-east-1',  # Adjust the region if needed
+            endpoint_url='https://iam.wasabisys.com',  # Wasabi IAM endpoint (for Wasabi)
+            api_version='2010-05-08'  # IAM API version (compatible with AWS)
+        )
+
+        # Update user name and path (if provided)
+        if new_user_name or new_path:
+            update_params = {
+                'UserName': user_name
+            }
+            if new_user_name:
+                update_params['NewUserName'] = new_user_name
+            if new_path:
+                update_params['NewPath'] = new_path
+
+            # Call the update_user API to update name and path
+            iam.update_user(**update_params)
+            user_name = new_user_name if new_user_name else user_name
+
+        # Update active status by enabling/disabling the user's access keys
+        if active_status is not None:
+            # Get all access keys for the user
+            access_keys = iam.list_access_keys(UserName=user_name)['AccessKeyMetadata']
+            
+            # Update access keys to match the desired active status
+            for key in access_keys:
+                new_status = 'Active' if active_status else 'Inactive'
+                iam.update_access_key(
+                    UserName=user_name,
+                    AccessKeyId=key['AccessKeyId'],
+                    Status=new_status
+                )
+
+        return json.dumps({
+                'message': f"User {user_name} updated successfully",
+                'new_user_name': new_user_name,
+                'new_path': new_path,
+                'active_status': active_status
+        })
+        # return {
+        #     'statusCode': 200,
+        #     'body': json.dumps({
+        #         'message': f"User {user_name} updated successfully",
+        #         'new_user_name': new_user_name,
+        #         'new_path': new_path,
+        #         'active_status': active_status
+        #     })
+        # }
+
+    except (BotoCoreError, ClientError) as e:
+        # Log and return any error
+        print(f"Error updating user {user_name}: {str(e)}")
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'error': str(e)})
+        }
