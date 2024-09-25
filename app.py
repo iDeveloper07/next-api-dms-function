@@ -13,7 +13,7 @@ from middleware import middleware_after
 from rds_proxy import execute_query
 from utils import DateTimeEncoder  # Import the custom DateTimeEncoder
 
-from module.role import get_role_list, create_iam_role
+from module.role import get_role_list, create_iam_role, create_s3_policy
 
 from module.users import list_users, get_user_details, list_available_policies, get_assigned_policies, attach_policy_to_user, remove_policy_from_user, update_user_info
 
@@ -233,6 +233,28 @@ def update_user():
         logger.error(f"Failed to create Wasabi Role: {str(e)}")
         return {"error": "Failed to create role from Wasabi"}, 500
   
+@app.post("/policy/create")
+def create_policy():
+    try:
+        # Fetch and parse the JSON body of the request
+        policy_data = app.current_event.json_body
+        
+        # Access dictionary keys properly
+        bucket_permissions = policy_data.get('bucket_permissions')
+        policy_name = policy_data.get('policy_name')
+
+        if not bucket_permissions or not policy_name:
+            return {"error": "Missing User Info"}, 400
+
+        # Call the create IAM role function
+        res = create_s3_policy(bucket_permissions, policy_name)
+        return {"res": res}
+    
+    except (BotoCoreError, ClientError) as e:
+        logger.error(f"Failed to create Wasabi Role: {str(e)}")
+        return {"error": "Failed to create role from Wasabi"}, 500
+  
+
 
 
 @middleware_after
