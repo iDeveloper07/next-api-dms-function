@@ -14,8 +14,8 @@ from rds_proxy import execute_query
 from utils import DateTimeEncoder  # Import the custom DateTimeEncoder
 
 from module.role import get_role_list, create_iam_role, create_s3_policy
-
 from module.users import list_users, get_user_details, list_available_policies, get_assigned_policies, attach_policy_to_user, remove_policy_from_user, update_user_info
+from module.bucket import delete_bucket, delete_folder, delete_object
 
 logger = Logger()
 app = APIGatewayRestResolver()
@@ -76,10 +76,19 @@ def delete_todo(todo_id: str):
 # To test RDS Proxy connection
 @app.get("/test/rds_proxy")
 def test_rds_proxy():
-    result = execute_query("""SELECT * FROM todos LIMIT 10""")
+    select_query = "SELECT * FROM bucket_audit;"
+    results = execute_query(select_query)
 
-    # Serialize result using DateTimeEncoder
-    return json.dumps(result[0] if result else {}, cls=DateTimeEncoder)
+    
+    return {
+        'statusCode': 200,
+        'body': json.dumps(results, default=str)
+    }
+    
+    
+# @app.get("/test/rds_proxy_2")
+# def test_rds_proxy1():
+   
 
 @app.get("/wasabi/buckets")
 def list_wasabi_buckets():
@@ -254,7 +263,32 @@ def create_policy():
         logger.error(f"Failed to create Wasabi Role: {str(e)}")
         return {"error": "Failed to create role from Wasabi"}, 500
   
+@app.post("/bucket/delete")
+def bucket_delete():
 
+    data = app.current_event.json_body
+
+    bucket_name = data.get('bucket_name')
+    key = data.get('key',"")  # The object or folder to delete
+    action = data.get('action')  # 'bucket', 'folder', or 'object'
+    
+    if not bucket_name or not action:
+        return {
+            'statusCode': 400,
+            'body': 'Missing required parameters: bucket_name and action'
+        }
+
+    if action == 'bucket':
+        return delete_bucket(bucket_name)
+    elif action == 'folder':
+        return delete_folder(bucket_name, key)
+    elif action == 'object':
+        return delete_object(bucket_name, key)
+    else:
+        return {
+            'statusCode': 400,
+            'body': f"Invalid action: {action}. Expected 'bucket', 'folder', or 'object'."
+        }
 
 
 @middleware_after
