@@ -1,72 +1,86 @@
-import boto3
+import os
+import json
+import logging
 import psycopg2
-from os import environ
+import boto3
+from botocore.exceptions import ClientError
 
-from aws_lambda_powertools import Logger
+# Initialize logger
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
-logger = Logger()
-client = boto3.client('rds')  # Get the rds object
+# Global variable to hold the database connection
+connection = None
 
-# Get the required parameters to create a token
-# Get the RDS proxy endpoint,  By default, all proxy connections have read/write capability and use the writer instance. 
-# To connect to the read replica only, create an additional RDS proxy endpoint and specify TargetRole to READ_ONLY.
-aws_region = environ.get('REGION')                  # Get the AWS region
-proxy_endpoint = environ.get('RDS_PROXY_ENDPOINT')  # Get the RDS proxy endpoint
-db_port = environ.get('DB_PORT')                    # Get the database port
-db_username = environ.get('DB_USERNAME')            # Get the database username
-db_password = environ.get('DB_PASSWORD')            # Get the database password
-database = environ.get('DB_NAME')                   # Get the database name 
-is_debug = environ.get('DEBUG')                     # Is debug mode enabled
+# Get the required parameters from environment variables
+AWS_REGION = os.environ.get('AWS_REGION')
+RDS_PROXY_ENDPOINT = os.environ.get('RDS_PROXY_ENDPOINT')
+DB_PORT = int(os.environ.get('DB_PORT', '5432'))  # Default to 5432 if not set
+SECRET_NAME = os.environ.get('SECRET_NAME')
+IS_DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
 
+if IS_DEBUG:
+    logger.setLevel(logging.DEBUG)
 
-# Create RDS Connection
-def create_rds_connection():
+def get_db_credentials():
+    """Retrieve database credentials from AWS Secrets Manager."""
+    session = boto3.session.Session()
+    client = session.client(service_name='secretsmanager', region_name=AWS_REGION)
     try:
-        token = db_password
-        if is_debug != 'True':
-            # Generate the authentication token -- temporary password
-            token = client.generate_db_auth_token(
-                DBHostname=proxy_endpoint,
-                Port=db_port,
-                DBUsername=db_username,
-                Region=aws_region
+        get_secret_value_response = client.get_secret_value(SecretId=SECRET_NAME)
+        secret = get_secret_value_response['SecretString']
+        credentials = json.loads(secret)
+        return credentials
+    except ClientError as e:
+        logger.error(f"Error retrieving secret: {e}")
+        raise e
+
+def create_rds_connection():
+    global connection
+    if connection is None or connection.closed != 0:
+        # Retrieve database credentials
+        credentials = get_db_credentials()
+        db_username = credentials['username']
+        db_password = credentials['password']
+        db_name = credentials.get('dbname', 'postgres')
+        db_port = int(credentials.get('port', DB_PORT))
+        db_host = RDS_PROXY_ENDPOINT or credentials.get('host')
+
+        try:
+            # Connect to the database via RDS Proxy
+            connection = psycopg2.connect(
+                host=db_host,
+                user=db_username,
+                password=db_password,
+                dbname=db_name,
+                port=db_port,
+                connect_timeout=5
             )
-
-        # Create an RDS connection object
-        connection = psycopg2.connect(
-            host=proxy_endpoint,
-            database=database,
-            port=db_port,
-            user=db_username,
-            password=token,
-        )
-    except Exception as e:
-        logger.error("Failed to create database connection due to {}".format(e))
-        return e
-
-    return connection
-
+            logger.info("SUCCESS: Connection to RDS Proxy succeeded")
+        except Exception as e:
+            logger.error(f"ERROR: Could not connect to RDS Proxy. {e}")
+            raise e
 
 def execute_query(query, data=None):
-    """
-    Executes the given SQL query on the RDS database and returns the results.
-
-    Args:
-        query (str): The SQL query to execute.
-        data (tuple, optional): The data to be passed as parameters to the query.
-
-    Returns:
-        list: The results of the query as a list of tuples.
-
-    """
     try:
-        conn = create_rds_connection()
-        cursor = conn.cursor()
-        cursor.execute(query, data)
-        results = cursor.fetchall()
-        conn.commit()
-        conn.close()
+        if connection is None or connection.closed != 0:
+            create_rds_connection()
+
+        with connection.cursor() as cursor:
+            cursor.execute(query, data)
+            results = cursor.fetchall()
+            connection.commit()
+        # Do not close the connection if you intend to reuse it
+        return results
     except Exception as e:
-        logger.error(e)
-        results = []
-    return results
+        logger.error(f"ERROR executing query: {e}")
+        return []
+
+def lambda_handler(event, context):
+    # Example usage
+    query = "SELECT * FROM todos LIMIT 10;"
+    results = execute_query(query)
+    return {
+        'statusCode': 200,
+        'body': json.dumps(results, default=str)
+    }
