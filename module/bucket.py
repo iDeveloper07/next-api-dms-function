@@ -1,5 +1,6 @@
 import boto3
 import os
+from rds_proxy import execute_query
 
 def get_s3_client(bucket_name):
     """
@@ -33,8 +34,51 @@ def get_s3_client(bucket_name):
         region_name=region or "us-east-1"
     )
 
+def get_wasabi_user():
+    """
+    Retrieve the Wasabi user information using the access key and secret key from the IAM client.
+    """
+    iam_client = boto3.client(
+        'iam',
+        aws_access_key_id=os.environ['WASABI_ACCESS_KEY'],  # Fetch from environment variables
+        aws_secret_access_key=os.environ['WASABI_SECRET_KEY'],  # Fetch from environment variables
+        region_name='us-east-1',  # Adjust the region if needed
+        endpoint_url='https://iam.wasabisys.com',  # Wasabi IAM endpoint
+        api_version='2010-05-08'  # IAM API version (compatible with AWS)
+    )
 
-def delete_bucket(bucket_name):
+    try:
+        # Get the user information associated with the access key
+        user_info = iam_client.get_user()
+        print("User Info:", user_info)
+        
+        # Extract account information from the Arn
+        arn = user_info['User']['Arn']
+        # Extract account ID from the Arn (example Arn: arn:aws:iam::100000281160:root)
+        account_name = arn.split(":")[-1]
+        # return "00000000-0000-0000-0000-000000000000"
+        return account_name
+        # return f"Account {account_id}"
+    except Exception as e:
+        print(f"Error retrieving user information: {str(e)}")
+        return None
+
+def log_audit(tenant_id, bucket_name, folder, file, action):
+    """
+    Log the delete operation to the bucket_audit table.
+    """
+    audit_query = """
+    INSERT INTO bucket_audit (tenant_id, bucket_name, folder, file, action, user_id, username)
+    VALUES (%s, %s, %s, %s, %s, %s, %s);
+    """
+    # Dummy tenant ID, you can replace it with the real value
+    tenant_id = tenant_id or '00000000-0000-0000-0000-000000000000'
+    user_id = tenant_id or '00000000-0000-0000-0000-000000000000'
+    user_name = get_wasabi_user()  # Get the user based on the access key and secret key
+    execute_query(audit_query, (tenant_id, bucket_name, folder, file, action, user_id, user_name))
+
+
+def delete_bucket(bucket_name, tenant_id=None):
     try:
         s3_client = get_s3_client(bucket_name)
 
@@ -46,6 +90,10 @@ def delete_bucket(bucket_name):
 
         # Delete the bucket after clearing objects
         s3_client.delete_bucket(Bucket=bucket_name)
+        
+        # Log audit entry
+        log_audit(tenant_id, bucket_name, None, None, "Delete bucket")
+
         return {
             'statusCode': 200,
             'body': f"Bucket '{bucket_name}' deleted successfully."
@@ -56,8 +104,7 @@ def delete_bucket(bucket_name):
             'body': f"Error deleting bucket: {str(e)}"
         }
 
-
-def delete_folder(bucket_name, folder_key):
+def delete_folder(bucket_name, folder_key, tenant_id=None):
     try:
         s3_client = get_s3_client(bucket_name)
 
@@ -66,6 +113,9 @@ def delete_folder(bucket_name, folder_key):
         if 'Contents' in objects:
             for obj in objects['Contents']:
                 s3_client.delete_object(Bucket=bucket_name, Key=obj['Key'])
+        
+        # Log audit entry
+        log_audit(tenant_id, bucket_name, folder_key, None, "Delete folder")
 
         return {
             'statusCode': 200,
@@ -77,13 +127,16 @@ def delete_folder(bucket_name, folder_key):
             'body': f"Error deleting folder: {str(e)}"
         }
 
-
-def delete_object(bucket_name, object_key):
+def delete_object(bucket_name, object_key, tenant_id=None):
     try:
         s3_client = get_s3_client(bucket_name)
 
         # Delete the object
         s3_client.delete_object(Bucket=bucket_name, Key=object_key)
+        
+        # Log audit entry
+        log_audit(tenant_id, bucket_name, None, object_key, "Delete file")
+
         return {
             'statusCode': 200,
             'body': f"Object '{object_key}' deleted successfully from bucket '{bucket_name}'."

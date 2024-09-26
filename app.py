@@ -76,6 +76,21 @@ def delete_todo(todo_id: str):
 # To test RDS Proxy connection
 @app.get("/test/rds_proxy")
 def test_rds_proxy():
+    update_query = """
+    -- Truncate the bucket_audit table (removes all rows)
+    TRUNCATE TABLE bucket_audit;
+
+    -- Add a new column called 'username' with data type VARCHAR(255)
+    ALTER TABLE bucket_audit
+        ADD COLUMN username VARCHAR(255);
+    """
+    truncate_query = """
+    -- Truncate the bucket_audit table (removes all rows)
+    TRUNCATE TABLE bucket_audit;
+    """
+
+    # execute_query(update_query)
+    
     select_query = "SELECT * FROM bucket_audit;"
     results = execute_query(select_query)
 
@@ -290,6 +305,15 @@ def bucket_delete():
             'body': f"Invalid action: {action}. Expected 'bucket', 'folder', or 'object'."
         }
 
+@app.get("/activities")
+def get_activities():
+    select_query = "SELECT * FROM bucket_audit;"
+    results = execute_query(select_query)
+    
+    return {
+        'statusCode': 200,
+        'body': json.dumps(results, default=str)
+    }
 
 @middleware_after
 @logger.inject_lambda_context(correlation_id_path=correlation_paths.API_GATEWAY_REST)
