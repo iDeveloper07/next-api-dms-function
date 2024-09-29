@@ -13,9 +13,10 @@ from middleware import middleware_after
 from rds_proxy import execute_query
 from utils import DateTimeEncoder  # Import the custom DateTimeEncoder
 
-from module.role import get_role_list, create_iam_role, create_s3_policy
-from module.users import list_users, get_user_details, list_available_policies, get_assigned_policies, attach_policy_to_user, remove_policy_from_user, update_user_info
+from module.role import get_role_list, create_iam_role
+from module.users import list_users, get_user_details, get_assigned_policies, attach_policy_to_user, remove_policy_from_user, update_user_info
 from module.bucket import delete_bucket, delete_folder, delete_object
+from module.policy import list_policies, create_s3_policy, generate_policy_input_from_existing
 
 logger = Logger()
 app = APIGatewayRestResolver()
@@ -174,15 +175,6 @@ def get_user_info(userName: str):
         logger.error(f"Failed to list Wasabi Users: {str(e)}")
         return json.dumps({"error": "Failed to list User Info from Wasabi"}, cls=DateTimeEncoder), 500
 
-@app.get("/users/policies")
-def users_policies_list():
-    try:
-        policies = list_available_policies()
-        return policies
-    except (BotoCoreError, ClientError) as e:
-        logger.error(f"Failed to list Wasabi policies: {str(e)}")
-        return json.dumps({"error": "Failed to list policies from Wasabi"}, cls=DateTimeEncoder), 500
-
 @app.get("/users/<userName>/policies")
 def get_user_policies(userName: str):
     try:
@@ -257,27 +249,7 @@ def update_user():
         logger.error(f"Failed to create Wasabi Role: {str(e)}")
         return {"error": "Failed to create role from Wasabi"}, 500
   
-@app.post("/policy/create")
-def create_policy():
-    try:
-        # Fetch and parse the JSON body of the request
-        policy_data = app.current_event.json_body
-        
-        # Access dictionary keys properly
-        bucket_permissions = policy_data.get('bucket_permissions')
-        policy_name = policy_data.get('policy_name')
-
-        if not bucket_permissions or not policy_name:
-            return {"error": "Missing User Info"}, 400
-
-        # Call the create IAM role function
-        res = create_s3_policy(bucket_permissions, policy_name)
-        return {"res": res}
-    
-    except (BotoCoreError, ClientError) as e:
-        logger.error(f"Failed to create Wasabi Role: {str(e)}")
-        return {"error": "Failed to create role from Wasabi"}, 500
-  
+ 
 @app.post("/bucket/delete")
 def bucket_delete():
 
@@ -314,6 +286,48 @@ def get_activities():
         'statusCode': 200,
         'body': json.dumps(results, default=str)
     }
+
+@app.get("/policies")
+def policies_list():
+    try:
+        policies = list_policies()
+        return policies
+    except (BotoCoreError, ClientError) as e:
+        logger.error(f"Failed to list Wasabi policies: {str(e)}")
+        return json.dumps({"error": "Failed to list policies from Wasabi"}, cls=DateTimeEncoder), 500
+
+@app.post("/policy/create")
+def create_policy():
+    try:
+        # Fetch and parse the JSON body of the request
+        policy_data = app.current_event.json_body
+        
+        # Access dictionary keys properly
+        bucket_permissions = policy_data.get('bucket_permissions')
+        policy_name = policy_data.get('policy_name')
+
+        if not bucket_permissions or not policy_name:
+            return {"error": "Missing User Info"}, 400
+
+        # Call the create IAM role function
+        res = create_s3_policy(bucket_permissions, policy_name)
+        return {"res": res}
+    
+    except (BotoCoreError, ClientError) as e:
+        logger.error(f"Failed to create Wasabi Role: {str(e)}")
+        return {"error": "Failed to create role from Wasabi"}, 500
+
+@app.post("/policy/permission")
+def get_user_permission():
+    try:
+        policy_data = app.current_event.json_body
+        policyArn = policy_data.get('policyArn')
+        permissions = generate_policy_input_from_existing(policyArn)
+        return permissions
+    except (BotoCoreError, ClientError) as e:
+        logger.error(f"Failed to list Wasabi Users: {str(e)}")
+        return json.dumps({"error": "Failed to list User Info from Wasabi"}, cls=DateTimeEncoder), 500
+    
 
 @middleware_after
 @logger.inject_lambda_context(correlation_id_path=correlation_paths.API_GATEWAY_REST)
