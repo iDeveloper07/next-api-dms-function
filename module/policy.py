@@ -288,3 +288,152 @@ def generate_policy_input_from_existing(policy_arn):
             'statusCode': 500,
             'body': f"Error: {str(e)}"
         }
+
+def update_s3_policy(bucket_permissions, policy_arn):
+    statements = []
+
+    iam_client = boto3.client(
+        'iam',
+        aws_access_key_id=os.environ['WASABI_ACCESS_KEY'],  # Fetch from environment variables
+        aws_secret_access_key=os.environ['WASABI_SECRET_KEY'],  # Fetch from environment variables
+        region_name='us-east-1',  # Adjust the region if needed
+        endpoint_url='https://iam.wasabisys.com'  # Wasabi IAM endpoint
+    )
+
+    # Include s3:ListAllMyBuckets to allow the user to see readable and writable buckets in the console
+    listable_buckets = []
+
+    # Loop through each bucket and set permissions
+    for bucket in bucket_permissions:
+        bucket_name = bucket['bucketName']
+        can_read = bucket['canRead']
+        can_write = bucket['canWrite']
+        
+        bucket_arn = f"arn:aws:s3:::{bucket_name}"
+        bucket_objects_arn = f"{bucket_arn}/*"
+
+        # If can read, allow ListBucket, GetObject, and GetBucketTagging permissions
+        if can_read:
+            # Add the bucket to the list of listable buckets for console visibility
+            listable_buckets.append(bucket_arn)
+            
+            # Allow ListBucket to make the bucket visible in the console
+            statements.append({
+                "Effect": "Allow",
+                "Action": "s3:ListBucket",
+                "Resource": bucket_arn
+            })
+            
+            # Allow GetObject to read objects in the bucket
+            statements.append({
+                "Effect": "Allow",
+                "Action": "s3:GetObject",
+                "Resource": bucket_objects_arn
+            })
+
+            # Allow GetBucketTagging to read the bucket tags
+            statements.append({
+                "Effect": "Allow",
+                "Action": "s3:GetBucketTagging",
+                "Resource": bucket_arn
+            })
+
+            # Explicitly deny write operations (create/update/delete objects, tagging)
+            if not can_write:
+                statements.append({
+                    "Effect": "Deny",
+                    "Action": [
+                        "s3:PutObject",        # Prevent uploading/creating files
+                        "s3:DeleteObject",     # Prevent deleting files
+                        "s3:PutObjectTagging", # Prevent modifying object tags
+                        "s3:PutBucketTagging"  # Prevent modifying bucket tags
+                    ],
+                    "Resource": bucket_objects_arn
+                })
+
+                statements.append({
+                    "Effect": "Deny",
+                    "Action": [
+                        "s3:PutBucketTagging"  # Prevent modifying bucket tags
+                    ],
+                    "Resource": bucket_arn
+                })
+
+        # If can write, allow PutObject, DeleteObject, and PutBucketTagging permissions
+        if can_write:
+            # Add the bucket to the list of listable buckets for console visibility
+            listable_buckets.append(bucket_arn)
+
+            # Allow ListBucket to make the bucket visible in the console (if not already added)
+            if bucket_arn not in listable_buckets:
+                statements.append({
+                    "Effect": "Allow",
+                    "Action": "s3:ListBucket",
+                    "Resource": bucket_arn
+                })
+
+            # Allow PutObject and DeleteObject to manage objects in the bucket
+            statements.append({
+                "Effect": "Allow",
+                "Action": ["s3:PutObject", "s3:DeleteObject"],
+                "Resource": bucket_objects_arn
+            })
+
+            # Allow PutBucketTagging to manage the bucket tags
+            statements.append({
+                "Effect": "Allow",
+                "Action": "s3:PutBucketTagging",
+                "Resource": bucket_arn
+            })
+
+    # Include s3:ListAllMyBuckets to allow seeing only the readable and writable buckets
+    if listable_buckets:
+        statements.append({
+            "Effect": "Allow",
+            "Action": "s3:ListAllMyBuckets",
+            "Resource": "*"
+        })
+
+    # Ensure there are statements in the policy
+    if not statements:
+        return {
+            'statusCode': 400,
+            'body': "No valid permissions provided to update policy."
+        }
+
+    # Create the full policy document with a valid version
+    policy_document = {
+        "Version": "2012-10-17",
+        "Statement": statements
+    }
+
+    try:
+        # Check the number of existing versions of the policy
+        versions = iam_client.list_policy_versions(PolicyArn=policy_arn)
+        if len(versions['Versions']) >= 5:
+            # If there are 5 versions, delete the oldest version that isn't the default
+            for version in versions['Versions']:
+                if not version['IsDefaultVersion']:
+                    iam_client.delete_policy_version(
+                        PolicyArn=policy_arn,
+                        VersionId=version['VersionId']
+                    )
+                    break
+
+        # Create a new policy version
+        response = iam_client.create_policy_version(
+            PolicyArn=policy_arn,
+            PolicyDocument=json.dumps(policy_document),
+            SetAsDefault=True  # Set the new version as the default
+        )
+
+        return {
+            'statusCode': 200,
+            'body': f"Policy {policy_arn} updated successfully. New version: {response['PolicyVersion']['VersionId']}"
+        }
+
+    except Exception as e:
+        return {
+            'statusCode': 400,
+            'body': f"Error updating policy: {str(e)}"
+        }

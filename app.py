@@ -16,7 +16,7 @@ from utils import DateTimeEncoder  # Import the custom DateTimeEncoder
 from module.role import get_role_list, create_iam_role
 from module.users import list_users, get_user_details, get_assigned_policies, attach_policy_to_user, remove_policy_from_user, update_user_info
 from module.bucket import delete_bucket, delete_folder, delete_object
-from module.policy import list_policies, create_s3_policy, generate_policy_input_from_existing
+from module.policy import list_policies, create_s3_policy, generate_policy_input_from_existing, update_s3_policy
 
 logger = Logger()
 app = APIGatewayRestResolver()
@@ -327,6 +327,27 @@ def get_user_permission():
     except (BotoCoreError, ClientError) as e:
         logger.error(f"Failed to list Wasabi Users: {str(e)}")
         return json.dumps({"error": "Failed to list User Info from Wasabi"}, cls=DateTimeEncoder), 500
+
+@app.post("/policy/update")
+def update_policy():
+    try:
+        # Fetch and parse the JSON body of the request
+        policy_data = app.current_event.json_body
+        
+        # Access dictionary keys properly
+        bucket_permissions = policy_data.get('bucket_permissions')
+        policy_arn = policy_data.get('policy_arn')
+
+        if not bucket_permissions or not policy_arn:
+            return {"error": "Missing User Info"}, 400
+
+        # Call the create IAM role function
+        res = update_s3_policy(bucket_permissions, policy_arn)
+        return {"res": res}
+    
+    except (BotoCoreError, ClientError) as e:
+        logger.error(f"Failed to create Wasabi Role: {str(e)}")
+        return {"error": "Failed to create role from Wasabi"}, 500
     
 
 @middleware_after
