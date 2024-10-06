@@ -68,19 +68,15 @@ def execute_query(query, data=None):
 
         with connection.cursor() as cursor:
             cursor.execute(query, data)
-            results = cursor.fetchall()
             connection.commit()
+            if cursor.description:
+                results = cursor.fetchall()
+                return results
+            else:
+                return None
         # Do not close the connection if you intend to reuse it
         return results
     except Exception as e:
         logger.error(f"ERROR executing query: {e}")
         return []
-
-def lambda_handler(event, context):
-    # Example usage
-    query = "SELECT * FROM todos LIMIT 10;"
-    results = execute_query(query)
-    return {
-        'statusCode': 200,
-        'body': json.dumps(results, default=str)
-    }
+    

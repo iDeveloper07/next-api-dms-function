@@ -150,59 +150,45 @@ def delete_object(bucket_name, object_key, tenant_id=None):
         return {"statusCode": 500, "body": f"Error deleting object: {e}"}
 
 
-def get_storage_info():
-    # Initialize the Wasabi S3 client
-    s3_client = boto3.client(
-        "s3",
-        endpoint_url=os.getenv("SERVER_URL"),
-        aws_access_key_id=os.getenv("WASABI_ACCESS_KEY"),
-        aws_secret_access_key=os.getenv("WASABI_SECRET_KEY"),
-        region_name="us-east-1",  # Explicitly specify the correct region
-    )
+import os
+import requests
+import logging
 
-    # Fetch all buckets
-    buckets = s3_client.list_buckets()
-    number_of_buckets = len(buckets["Buckets"])
+# Initialize logger
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
-    total_objects = 0
-    total_active_storage = 0
-    total_deleted_storage_size = 0
+def get_storage_utilizations():
+    try:
+        # Set up the stats endpoint URL
+        stats_url = "https://stats.wasabisys.com/v1/standalone/utilizations"
+        
+        # Prepare the request headers (as per the sample request format)
+        headers = {
+            'Authorization': f'{os.getenv("WASABI_ACCESS_KEY")}:{os.getenv("WASABI_SECRET_KEY")}',  # AccessKey:SecretKey
+            'Content-Type': 'application/json'
+        }
+        
+        # Send the request to the stats endpoint
+        response = requests.get(stats_url, headers=headers)
+        
+        # Check for a non-200 response status
+        if response.status_code != 200:
+            logger.error(f"Failed to fetch storage info, received HTTP {response.status_code}")
+            return {
+                "statusCode": response.status_code,
+                "body": f"Error: {response.status_code} - Unable to fetch storage info."
+            }
 
-    # Iterate over all buckets
-    for bucket in buckets["Buckets"]:
-        bucket_name = bucket["Name"]
+        # Return the entire JSON response
+        return {
+            "statusCode": 200,
+            "body": response.json()  # Directly return the full JSON response
+        }
 
-        # Count objects and calculate active storage
-        paginator = s3_client.get_paginator("list_objects_v2")
-        pages = paginator.paginate(Bucket=bucket_name)
-
-        for page in pages:
-            if "Contents" in page:
-                for obj in page["Contents"]:
-                    total_objects += 1  # Count the object
-                    total_active_storage += obj[
-                        "Size"
-                    ]  # Add object size to active storage
-
-        # List object versions (to find delete markers)
-        versions = s3_client.list_object_versions(Bucket=bucket_name)
-        if "DeleteMarkers" in versions:
-            for marker in versions["DeleteMarkers"]:
-                try:
-                    # Get size of the original object before deletion
-                    original_object = s3_client.head_object(
-                        Bucket=bucket_name, Key=marker["Key"]
-                    )
-                    total_deleted_storage_size += original_object["ContentLength"]
-                except Exception as e:
-                    print(f"Error fetching object size: {e}")
-
-    return {
-        "statusCode": 200,
-        "body": {
-            "Number of Buckets": number_of_buckets,
-            "Total Number of Objects": total_objects,
-            "Total Active Storage": f"{total_active_storage} bytes",
-            "Total Deleted Storage": f"{total_deleted_storage_size} bytes",
-        },
-    }
+    except Exception as e:
+        logger.error(f"Error fetching storage info: {e}")
+        return {
+            "statusCode": 500,
+            "body": f"Error: {str(e)}",
+        }

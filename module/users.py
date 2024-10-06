@@ -1,9 +1,22 @@
 import boto3
 import os
 import json
+import random
+import string
 from datetime import datetime
+import requests
+from rds_proxy import execute_query
 from botocore.exceptions import BotoCoreError, ClientError
 
+# Generate a random password
+def generate_password(length=16):
+    # Define the characters that can be used in the password
+    characters = string.ascii_letters + string.digits + string.punctuation
+
+    # Generate a random password
+    password = ''.join(random.choice(characters) for i in range(length))
+
+    return password
 
 # Custom JSON encoder to handle datetime serialization
 class DateTimeEncoder(json.JSONEncoder):
@@ -312,17 +325,114 @@ def update_user_info(user_name, new_user_name=None, new_path="/", active_status=
                 "active_status": active_status,
             }
         )
-        # return {
-        #     'statusCode': 200,
-        #     'body': json.dumps({
-        #         'message': f"User {user_name} updated successfully",
-        #         'new_user_name': new_user_name,
-        #         'new_path': new_path,
-        #         'active_status': active_status
-        #     })
-        # }
 
     except (BotoCoreError, ClientError) as e:
         # Log and return any error
         print(f"Error updating user {user_name}: {str(e)}")
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+
+
+# Function to store subaccount info in the RDS
+def store_subaccount_in_rds(tenant_id, password, acct_info):
+    """
+    insert the created sub account info into the rds
+    """
+    insert_query = """
+    INSERT INTO tenants (tenant_id, wasabi_sub_account_id, wasabi_sub_account_num, password, access_key, secret_key)
+    VALUES (%s, %s, %s, %s, %s, %s) RETURNING id;
+    """
+
+    sub_account_id = execute_query(
+        insert_query,
+        (
+            tenant_id,
+            acct_info["AcctName"],
+            acct_info["AcctNum"],
+            password,
+            acct_info["AccessKey"],
+            acct_info["SecretKey"],
+        ),
+    )
+
+    # get the crrect tenant id from [(1,)] format
+    acct_info["TenantId"] = tenant_id
+
+    return acct_info
+
+
+def create_wasabi_subaccount(tenant_id, seed_user_id):
+    url = "https://partner.wasabisys.com/v1/accounts"
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": os.environ["WASABI_API"],  # Replace with your Wasabi API key
+    }
+
+    password = generate_password()
+
+    # Define the request payload
+    payload = {
+        "AcctName": seed_user_id,
+        "IsTrial": True,
+        "QuotaGB" : 1024,
+        "Password": password,
+        "EnableFTP": True,
+    }
+
+    # Send the PUT request to create the subaccount
+    response = requests.put(url, json=payload, headers=headers)
+
+    if response.status_code == 200:
+        print(response.json())
+        return store_subaccount_in_rds(
+            tenant_id,
+            password,
+            response.json()
+        )  # Return the response as JSON if successful
+    else:
+        return response.json(), 202
+
+def create_wasabi_subuser(user_name):
+    try:
+        # Initialize IAM client for Wasabi
+        iam_client = boto3.client(
+            "iam",
+            aws_access_key_id=os.environ[
+                "WASABI_ACCESS_KEY"
+            ],  # Fetch from environment variables
+            aws_secret_access_key=os.environ[
+                "WASABI_SECRET_KEY"
+            ],  # Fetch from environment variables
+            region_name="us-east-1",  # Adjust the region if needed
+            endpoint_url="https://iam.wasabisys.com",  # Wasabi IAM endpoint
+            api_version="2010-05-08",  # IAM API version (compatible with AWS)
+        )
+
+        # Create an IAM user (sub-user)
+        response = iam_client.create_user(UserName=user_name)
+   
+        response_key = iam_client.create_access_key(UserName=user_name)
+   
+        new_user = {
+            "UserName" : user_name,
+            "UserId" : response['User']['UserId'],
+            "AccessKeyId" : response_key['AccessKey']['AccessKeyId'],
+            "SecretAccessKey" : response_key['AccessKey']['SecretAccessKey']
+        }
+        
+        # Return sub-user details
+        return new_user
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code == 'EntityAlreadyExists':
+            print(f"Error: User {user_name} already exists.")
+            return {"error": f"User {user_name} already exists"}, 202  # Conflict HTTP status code
+        
+        else:
+            print(f"Unexpected error: {e}")
+            return {"error": "An unexpected error occurred", "details": str(e)}, 202  # Internal Server Error
+    
+    except Exception as e:
+        # Generic exception handler
+        print(f"An error occurred: {e}")
+        return {"error": "An error occurred", "details": str(e)}, 202

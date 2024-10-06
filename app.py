@@ -21,8 +21,15 @@ from module.users import (
     attach_policy_to_user,
     remove_policy_from_user,
     update_user_info,
+    create_wasabi_subaccount,
+    create_wasabi_subuser,
 )
-from module.bucket import delete_bucket, delete_folder, delete_object, get_storage_info
+from module.bucket import (
+    delete_bucket,
+    delete_folder,
+    delete_object,
+    get_storage_utilizations,
+)
 from module.policy import (
     list_policies,
     create_s3_policy,
@@ -57,15 +64,28 @@ def test_rds_proxy():
     """
 
     # execute_query(update_query)
+    create_tanants_table = """
+        DROP TABLE IF EXISTS tenants;  
+        CREATE TABLE tenants (
+            id SERIAL PRIMARY KEY,
+            tenant_id VARCHAR(255) NOT NULL,             
+            wasabi_sub_account_id VARCHAR(255) NOT NULL,
+            wasabi_sub_account_num VARCHAR(255) NOT NULL,
+            password VARCHAR(255) NOT NULL,
+            access_key VARCHAR(255) NOT NULL,
+            secret_key VARCHAR(255) NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+    """
 
-    select_query = "SELECT * FROM bucket_audit;"
-    results = execute_query(select_query)
+    drop_tenants_table = """
+             
+    """
+    select_query = "SELECT * FROM tenants;"
+    # results = execute_query(drop_tenants_table)
+    results = execute_query(create_tanants_table)
 
     return json.dumps(results, default=str)
-
-
-# @app.get("/test/rds_proxy_2")
-# def test_rds_proxy1():
 
 
 @app.get("/wasabi/buckets")
@@ -126,6 +146,13 @@ def roles_create():
 
 
 # User Management
+@app.put("/subAccount")
+def create_sub_account():
+    subAccount_info = app.current_event.json_body
+    tenant_id = subAccount_info.get("tenant_id")
+    seed_user_id = subAccount_info.get("seed_user_id")
+    return create_wasabi_subaccount(tenant_id, seed_user_id)
+    
 @app.get("/users")
 def users_list():
     try:
@@ -137,6 +164,19 @@ def users_list():
             {"error": "Failed to list users from Wasabi"}, cls=DateTimeEncoder
         ), 500
 
+@app.put("/users")
+def create_user():
+    try:
+        user_info = app.current_event.json_body
+        user_name = user_info.get("UserName")
+        res = create_wasabi_subuser(user_name)
+        return res
+    except (BotoCoreError, ClientError) as e:
+        logger.error(f"Failed to create new Wasabi sub User: {e}")
+        return json.dumps(
+            {"error": "Failed to create new Wasabi sub User"}, cls=DateTimeEncoder
+        ), 500
+    
 
 @app.get("/users/<userName>")
 def get_user_info(userName: str):
@@ -335,16 +375,18 @@ def update_policy():
         logger.error(f"Failed to create Wasabi Role: {e}")
         return {"error": "Failed to create role from Wasabi"}, 500
 
-@app.get("/storage")
-def get_storage():
+
+@app.get("/utilizations")
+def get_utilizations():
     try:
         # Call the create IAM role function
-        res = get_storage_info()
+        res = get_storage_utilizations()
         return res
 
     except (BotoCoreError, ClientError) as e:
         logger.error(f"Failed to get the storage info : {e}")
         return {"error": "Failed to get the storage info "}, 500
+
 
 @middleware_after
 @logger.inject_lambda_context(correlation_id_path=correlation_paths.API_GATEWAY_REST)
