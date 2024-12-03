@@ -1,0 +1,7 @@
+pytest
+pytest_mock
+requests
+aws-lambda-powertools
+psycopg2-binary
+boto3
+moto

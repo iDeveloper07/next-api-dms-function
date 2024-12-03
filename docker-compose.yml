@@ -1,0 +1,21 @@
+version: '3.9'
+
+services:
+  postgres-local:
+    image: postgres:14-alpine
+    container_name: postgres-local
+    ports:
+      - 5432:5432
+    volumes:
+      - ~/.docker/postgres:/var/lib/postgresql/data
+      - ./postgres/create_tables.sql:/docker-entrypoint-initdb.d/create_tables.sql
+    environment:
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=Todos
+    networks:
+      - postgres-local
+
+networks:
+  postgres-local:
+    name: postgres-local

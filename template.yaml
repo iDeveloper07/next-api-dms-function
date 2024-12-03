@@ -1,0 +1,392 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: SAM API for DMS Project with updated configurations
+
+Parameters:
+  ProxyName:
+    Type: String
+    Default: next-api-dms-proxy
+  DBInstanceName:
+    Type: String
+    Default: next-api-dms-db-instance
+  DBName:
+    Type: String
+    Default: mytestdb
+  DBUsername:
+    Type: String
+    Description: Username for database access
+  DBPassword:
+    Type: String
+    Description: Password for database access
+    NoEcho: 'true'
+  Port:
+    Type: Number
+    Description: Database port. For Postgres 5432 is default
+    Default: 5432
+  AllowedIPs:
+    Type: CommaDelimitedList
+    Description: List of CIDR ranges allowed to access the API
+    Default: "24.98.168.137/32/,98.124.162.110/32"
+
+Globals:
+  Function:
+    Timeout: 5
+    Runtime: python3.12
+    Tracing: Active
+    Environment:
+      Variables:
+        POWERTOOLS_LOG_LEVEL: INFO
+        POWERTOOLS_LOGGER_SAMPLE_RATE: 0.1
+        POWERTOOLS_LOGGER_LOG_EVENT: true
+        POWERTOOLS_SERVICE_NAME: next_sam_dms_api
+
+Resources:
+
+  # VPC for the private network
+  NextApiDmsVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: next-api-dms-vpc
+
+  # Internet Gateway for VPC
+  NextApiDmsInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: next-api-dms-igw
+
+  # Attach Internet Gateway to VPC
+  NextApiDmsVPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref NextApiDmsVPC
+      InternetGatewayId: !Ref NextApiDmsInternetGateway
+
+  # Public Subnet
+  NextApiDmsPublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref NextApiDmsVPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: next-api-dms-public-subnet
+
+  # Private Subnet 1
+  NextApiDmsPrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref NextApiDmsVPC
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: next-api-dms-private-subnet-1
+
+  # Private Subnet 2
+  NextApiDmsPrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref NextApiDmsVPC
+      CidrBlock: 10.0.3.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: next-api-dms-private-subnet-2
+
+  # Elastic IP for NAT Gateway
+  NextApiDmsElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  # NAT Gateway for private subnet internet access
+  NextApiDmsNATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NextApiDmsElasticIP.AllocationId
+      SubnetId: !Ref NextApiDmsPublicSubnet
+      Tags:
+        - Key: Name
+          Value: next-api-dms-nat-gateway
+
+  # Public Route Table
+  NextApiDmsPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref NextApiDmsVPC
+      Tags:
+        - Key: Name
+          Value: next-api-dms-public-rt
+
+  # Public Route
+  NextApiDmsPublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref NextApiDmsPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref NextApiDmsInternetGateway
+
+  # Associate Public Subnet with Public Route Table
+  NextApiDmsPublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref NextApiDmsPublicSubnet
+      RouteTableId: !Ref NextApiDmsPublicRouteTable
+
+  # Private Route Table
+  NextApiDmsPrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref NextApiDmsVPC
+      Tags:
+        - Key: Name
+          Value: next-api-dms-private-rt
+
+  # Private Route via NAT Gateway
+  NextApiDmsPrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref NextApiDmsPrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NextApiDmsNATGateway
+
+  # Associate Private Subnet 1 with Private Route Table
+  NextApiDmsPrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref NextApiDmsPrivateSubnet1
+      RouteTableId: !Ref NextApiDmsPrivateRouteTable
+
+  # Associate Private Subnet 2 with Private Route Table
+  NextApiDmsPrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref NextApiDmsPrivateSubnet2
+      RouteTableId: !Ref NextApiDmsPrivateRouteTable
+
+  # Security Group for Lambda
+  NextApiDmsLambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Lambda function
+      VpcId: !Ref NextApiDmsVPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: next-api-dms-lambda-sg
+
+  # Security Group for RDS Proxy
+  NextApiDmsRDSProxySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for RDS Proxy
+      VpcId: !Ref NextApiDmsVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref Port
+          ToPort: !Ref Port
+          SourceSecurityGroupId: !Ref NextApiDmsLambdaSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: next-api-dms-rds-proxy-sg
+
+  # Lambda Function
+  NextApiDmsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: next-api-dms-function
+      Handler: app.lambda_handler
+      CodeUri: ./src
+      Description: Lambda function used for next-api-dms
+      Environment:
+        Variables:
+          SERVER_URL: https://jsonplaceholder.typicode.com
+          REGION: !Ref AWS::Region
+          RDS_PROXY_ENDPOINT: !GetAtt NextApiDmsDBProxy.Endpoint
+          DB_PORT: !Ref Port
+          DB_NAME: !Ref DBName
+          DB_USERNAME: !Ref DBUsername
+          DB_PASSWORD: !Ref DBPassword
+          DEBUG: 'False'
+          
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref NextApiDmsLambdaSecurityGroup
+        SubnetIds:
+          - !Ref NextApiDmsPrivateSubnet1
+          - !Ref NextApiDmsPrivateSubnet2
+      Events:
+        AnyApiEvent:
+          Type: Api
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+            RestApiId: !Ref NextApiDmsApi
+      Layers:
+        - !Ref NextApiDmsPsycopg2Layer
+        - !Ref NextApiDmsRequestsLayer
+        - arn:aws:lambda:us-east-2:017000801446:layer:AWSLambdaPowertoolsPythonV2:78
+      Tags:
+        Name: next-api-dms-function
+
+  # API Gateway
+  NextApiDmsApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: next-api-dms-api
+      StageName: prod
+      Auth:
+        ResourcePolicy:
+          IpRangeWhitelist: !Ref AllowedIPs
+      TracingEnabled: true
+      Cors:
+        AllowOrigin: "'https://example.com'"
+        AllowHeaders: "'Content-Type,Authorization,X-Amz-Date'"
+        MaxAge: "'300'"
+      BinaryMediaTypes:
+        - "*/*"
+      Tags:
+        Name: next-api-dms-api
+
+  # Secrets Manager Secret for DB credentials
+  NextApiDmsSecretForDBProxy:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: next-api-dms-secret
+      Description: Secret for database used in next-api-dms
+      SecretString:
+        Fn::Sub: '{"username": "${DBUsername}", "password": "${DBPassword}"}'
+      Tags:
+        - Key: Name
+          Value: next-api-dms-secret
+
+  # IAM Role for RDS Proxy
+  NextApiDmsRDSSecretReaderRoleForDBProxy:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: next-api-dms-rds-secret-reader-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - rds.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: '/'
+      Policies:
+        - PolicyName: next-api-dms-rds-secret-reader-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: 'secretsmanager:GetSecretValue'
+                Resource: !Ref NextApiDmsSecretForDBProxy
+      Tags:
+        - Key: Name
+          Value: next-api-dms-rds-secret-reader-role
+
+# DB Subnet Group
+  NextApiDmsDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: "Subnet group for next-api-dms RDS instance"
+      SubnetIds:
+        - !Ref NextApiDmsPrivateSubnet1
+        - !Ref NextApiDmsPrivateSubnet2
+      Tags:
+        - Key: Name
+          Value: next-api-dms-db-subnet-group
+
+
+ # RDS DB Instance
+  NextApiDmsDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Ref DBInstanceName
+      AllocatedStorage: 20
+      DBInstanceClass: db.t4g.micro  # Graviton2 instance, typically cheaper than db.t3.micro
+      Engine: postgres
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBName: !Ref DBName
+      VPCSecurityGroups:
+        - !Ref NextApiDmsRDSProxySecurityGroup
+      DBSubnetGroupName: !Ref NextApiDmsDBSubnetGroup  # Explicitly specify the DB Subnet Group (ensure it's created)
+      MultiAZ: false  # Cheapest option
+      PubliclyAccessible: false
+      StorageType: standard  # Use Magnetic storage (cheapest option)
+      BackupRetentionPeriod: 1  # Shortest backup retention period (minimal cost)
+      Tags:
+        - Key: Name
+          Value: next-api-dms-db-instance
+    DeletionPolicy: Snapshot  # Moved outside of Properties block
+
+  # RDS Proxy
+  NextApiDmsDBProxy:
+    Type: AWS::RDS::DBProxy
+    Properties:
+      DebugLogging: true
+      DBProxyName: !Ref ProxyName
+      EngineFamily: POSTGRESQL
+      RoleArn: !GetAtt NextApiDmsRDSSecretReaderRoleForDBProxy.Arn
+      Auth:
+        - AuthScheme: SECRETS
+          SecretArn: !Ref NextApiDmsSecretForDBProxy
+          IAMAuth: DISABLED
+      VpcSecurityGroupIds:
+        - !Ref NextApiDmsRDSProxySecurityGroup
+      VpcSubnetIds:
+        - !Ref NextApiDmsPrivateSubnet1
+        - !Ref NextApiDmsPrivateSubnet2
+      Tags:
+        - Key: Name
+          Value: next-api-dms-db-proxy
+
+  # RDS Proxy Target Group
+  NextApiDmsDBProxyTargetGroup:
+    Type: AWS::RDS::DBProxyTargetGroup
+    Properties:
+      DBProxyName: !Ref NextApiDmsDBProxy
+      DBInstanceIdentifiers:
+        - !Ref DBInstanceName
+      TargetGroupName: default
+      ConnectionPoolConfigurationInfo:
+        MaxConnectionsPercent: 100
+        MaxIdleConnectionsPercent: 50
+        ConnectionBorrowTimeout: 120
+
+  # Lambda Layer for psycopg2
+  NextApiDmsPsycopg2Layer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      ContentUri: ./layers/psycopg2/psycopg2.zip
+      LayerName: next-api-dms-psycopg2
+      CompatibleRuntimes:
+        - python3.12
+
+  # Lambda Layer for requests
+  NextApiDmsRequestsLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      ContentUri: ./layers/requests/requests.zip
+      LayerName: next-api-dms-requests
+      CompatibleRuntimes:
+        - python3.12
